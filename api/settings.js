@@ -22,9 +22,15 @@ async function kvGet(key){
   });
 
   const data = await res.json();
-  return data?.result ? JSON.parse(data.result) : null;
-}
+  if (data?.result == null) return null;
 
+  if (typeof data.result === "string") {
+    try { return JSON.parse(data.result); }
+    catch { return null; }
+  }
+
+  return data.result;
+}
 async function kvSet(key, value){
   const url = process.env.UPSTASH_REDIS_REST_URL;
   const token = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -59,15 +65,32 @@ export default async function handler(req, res) {
   if (cors(req, res)) return;
 
   // GET público: cualquiera puede leer settings
-  if (req.method === "GET") {
-    try{
-      const saved = await kvGet(KEY);
-      return res.status(200).json(saved || DEFAULTS);
-    }catch(e){
-      // si no está configurado Upstash aún, devuelve defaults en vez de romper
-      return res.status(200).json(DEFAULTS);
-    }
+if (req.method === "GET") {
+  let base = DEFAULTS;
+
+  // 1) lee settings guardados (warranty/logo/heroBg)
+  try{
+    const saved = await kvGet(KEY);
+    if(saved && typeof saved === "object") base = { ...DEFAULTS, ...saved };
+  }catch(e){
+    // si falla Upstash, seguimos con DEFAULTS
   }
+
+  // 2) fuerza la tasa real del día desde /api/rate
+  let liveRate = base.rate;
+  try{
+    const rr = await fetch("https://brutalux-api.vercel.app/api/rate", { cache:"no-store" });
+    if(rr.ok){
+      const rj = await rr.json();
+      const r = Number(rj?.rate);
+      if(isFinite(r) && r > 0) liveRate = r;
+    }
+  }catch(e){
+    // si falla /api/rate, dejamos la tasa guardada/default
+  }
+
+  return res.status(200).json({ ...base, rate: liveRate });
+}
 
   // PUT privado: solo admin con token
   if (req.method === "PUT") {
