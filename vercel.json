@@ -1,6 +1,6 @@
 {
   "version": 2,
   "crons": [
-    {"path":"/api/cron/rate?token=30158858Jm","schedule":"*/30 * * * *"}
+    {"path":"/api/cron/rate?token=30158858Jm.","schedule":"*/30 * * * *"}
   ]
 }
