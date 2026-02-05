@@ -3,12 +3,11 @@ import { sb } from "../_supabase.js";
 const CRON_TOKEN = process.env.CRON_TOKEN;
 const SOURCE_URL = "https://monitorvenezuela.com/tasa/bcv-euro/";
 
-// ✅ RANGO REALISTA Bs/EUR (ajústalo si sube mucho en el futuro)
-const MIN_RATE = 100;
-const MAX_RATE = 900;
+// ✅ rango realista (tu tasa hoy ~447)
+const MIN_RATE = 200;
+const MAX_RATE = 700;
 
 function parseFirstNumber(str){
-  // soporta 447,22 / 447.22 / 1.234,56
   const m = str.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,4})|\d{2,5}(?:\.\d{1,4})?)/);
   if(!m) return null;
   const n = Number(m[1].replace(/\./g, "").replace(",", "."));
@@ -28,15 +27,13 @@ export default async function handler(req, res){
     const html = await r.text();
     const lower = html.toLowerCase();
 
-    // Intento: buscar número cerca de "euro"
     const idx = lower.indexOf("euro");
     const slice = idx >= 0 ? html.slice(Math.max(0, idx - 1200), idx + 2500) : html;
 
     const rate = parseFirstNumber(slice) ?? parseFirstNumber(html);
-
     if(!rate) return res.status(500).json({ ok:false, error:"Rate not found" });
 
-    // ✅ Anti-locura: no guardes números fuera del rango
+    // ✅ nunca guardes locuras
     if(!(rate >= MIN_RATE && rate <= MAX_RATE)){
       return res.status(200).json({
         ok: false,
@@ -47,7 +44,6 @@ export default async function handler(req, res){
       });
     }
 
-    // guardar en Supabase
     const client = sb();
     const { error } = await client
       .from("settings")
