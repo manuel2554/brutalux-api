@@ -3,17 +3,16 @@ import { sb } from "../_supabase.js";
 const CRON_TOKEN = process.env.CRON_TOKEN;
 const SOURCE_URL = "https://monitorvenezuela.com/tasa/bcv-euro/";
 
-// ✅ Firma para verificar que sí se desplegó este código
-const VERSION = "cron-v3-range-200-700";
+const VERSION = "cron-v4-exact-label";
 
-// ✅ Rango realista para Bs/EUR (hoy ~447)
-// Si en el futuro sube mucho, ajusta MAX_RATE.
+// rango de seguridad (por si acaso)
 const MIN_RATE = 200;
 const MAX_RATE = 700;
 
-function parseNumber(str){
-  // Soporta: 447,22 | 447.22 | 1.234,56
-  const m = str.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,4})|\d{2,5}(?:\.\d{1,4})?)/);
+function extractRate(html){
+  // Busca exactamente: Tasa Euro BCV: 447,22 Bs
+  const re = /Tasa\s+Euro\s+BCV:\s*([0-9]{1,3}(?:\.[0-9]{3})*(?:,[0-9]{1,4})?)\s*Bs/;
+  const m = html.match(re);
   if(!m) return null;
   const n = Number(m[1].replace(/\./g, "").replace(",", "."));
   return Number.isFinite(n) ? n : null;
@@ -26,48 +25,30 @@ export default async function handler(req, res){
   }
 
   try{
-    const r = await fetch(SOURCE_URL, { headers: { "User-Agent": "brutalux-api/1.0" } });
-    if(!r.ok){
-      return res.status(502).json({ ok:false, error:"Source fetch failed", status: r.status, version: VERSION });
-    }
+    const r = await fetch(SOURCE_URL, { headers: { "User-Agent":"brutalux-api/1.0" } });
+    if(!r.ok) return res.status(502).json({ ok:false, error:"Source fetch failed", status:r.status, version: VERSION });
 
     const html = await r.text();
-    const lower = html.toLowerCase();
-
-    // Intento: buscar un número cerca de "euro" y también cerca de "bcv"
-    const idxEuro = lower.indexOf("euro");
-    const sliceEuro = idxEuro >= 0 ? html.slice(Math.max(0, idxEuro - 1500), idxEuro + 3000) : "";
-
-    const idxBcv = lower.indexOf("bcv");
-    const sliceBcv = idxBcv >= 0 ? html.slice(Math.max(0, idxBcv - 1500), idxBcv + 3000) : "";
-
-    // Extraemos candidatos
-    const candEuro = sliceEuro ? parseNumber(sliceEuro) : null;
-    const candBcv  = sliceBcv ? parseNumber(sliceBcv) : null;
-    const candAny  = parseNumber(html);
-
-    // Elegimos el primer candidato válido en rango
-    const candidates = [candEuro, candBcv, candAny].filter(x => Number.isFinite(x));
-    const rate = candidates.find(x => x >= MIN_RATE && x <= MAX_RATE) ?? candidates[0] ?? null;
+    const rate = extractRate(html);
 
     if(!rate){
-      return res.status(500).json({ ok:false, error:"Rate not found", version: VERSION });
-    }
-
-    // ✅ Anti-locura: si está fuera del rango, NO guardamos
-    if(!(rate >= MIN_RATE && rate <= MAX_RATE)){
       return res.status(200).json({
-        ok: false,
-        error: "Rate out of range (NOT saved)",
-        rate,
-        expected: `${MIN_RATE}-${MAX_RATE}`,
-        candidates,
-        source: SOURCE_URL,
+        ok:false,
+        error:"Rate not found with exact label (NOT saved)",
         version: VERSION
       });
     }
 
-    // Guardar en Supabase
+    if(!(rate >= MIN_RATE && rate <= MAX_RATE)){
+      return res.status(200).json({
+        ok:false,
+        error:"Rate out of range (NOT saved)",
+        rate,
+        expected: `${MIN_RATE}-${MAX_RATE}`,
+        version: VERSION
+      });
+    }
+
     const client = sb();
     const { error } = await client
       .from("settings")
@@ -77,11 +58,9 @@ export default async function handler(req, res){
         updated_at: new Date().toISOString()
       });
 
-    if(error){
-      return res.status(500).json({ ok:false, error: error.message, version: VERSION });
-    }
+    if(error) return res.status(500).json({ ok:false, error: error.message, version: VERSION });
 
-    return res.status(200).json({ ok:true, rate, candidates, source: SOURCE_URL, version: VERSION });
+    return res.status(200).json({ ok:true, rate, source: SOURCE_URL, version: VERSION });
   }catch(e){
     return res.status(500).json({ ok:false, error: String(e?.message || e), version: VERSION });
   }
