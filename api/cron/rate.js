@@ -3,16 +3,17 @@ import { sb } from "../_supabase.js";
 const CRON_TOKEN = process.env.CRON_TOKEN;
 const SOURCE_URL = "https://monitorvenezuela.com/tasa/bcv-euro/";
 
-// ✅ rango de seguridad (ajústalo si quieres)
-const MIN_RATE = 10;     // nunca debería ser 0 o 1
-const MAX_RATE = 5000;   // evita agarrar números locos
+// ✅ anti-locura para Bs/EUR (ajusta si sube mucho en el futuro)
+const MIN_RATE = 100;
+const MAX_RATE = 900;
 
-function parseRateFromText(txt){
-  // Busca números tipo 442,59 / 442.59 / 1.234,56
-  const m = txt.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,4})|\d{2,5}(?:\.\d{1,4})?)/);
-  if(!m) return null;
-  const n = Number(m[1].replace(/\./g, "").replace(",", "."));
-  return Number.isFinite(n) ? n : null;
+if(!(rate >= MIN_RATE && rate <= MAX_RATE)){
+  return res.status(200).json({
+    ok: false,
+    error: "Rate out of range (not saved)",
+    rate,
+    expected: `${MIN_RATE}-${MAX_RATE}`
+  });
 }
 
 function extractMonitorRate(html){
