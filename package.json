@@ -1,5 +1,8 @@
 {
   "name": "brutalux-api",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.49.1"
+  }
 }
