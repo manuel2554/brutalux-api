@@ -3,42 +3,16 @@ import { sb } from "../_supabase.js";
 const CRON_TOKEN = process.env.CRON_TOKEN;
 const SOURCE_URL = "https://monitorvenezuela.com/tasa/bcv-euro/";
 
-// ✅ anti-locura para Bs/EUR (ajusta si sube mucho en el futuro)
+// ✅ RANGO REALISTA Bs/EUR (ajústalo si sube mucho en el futuro)
 const MIN_RATE = 100;
 const MAX_RATE = 900;
 
-if(!(rate >= MIN_RATE && rate <= MAX_RATE)){
-  return res.status(200).json({
-    ok: false,
-    error: "Rate out of range (not saved)",
-    rate,
-    expected: `${MIN_RATE}-${MAX_RATE}`
-  });
-}
-
-function extractMonitorRate(html){
-  const lower = html.toLowerCase();
-
-  // 1) intentamos extraer cerca de “bcv” y “euro”
-  const anchors = ["euro", "bcv"];
-  let best = null;
-
-  for(const a of anchors){
-    const idx = lower.indexOf(a);
-    if(idx >= 0){
-      const slice = html.slice(Math.max(0, idx - 1200), idx + 2000);
-      const r = parseRateFromText(slice);
-      if(r) { best = r; break; }
-    }
-  }
-
-  // 2) fallback: primer número razonable del documento
-  if(!best){
-    const r = parseRateFromText(html);
-    if(r) best = r;
-  }
-
-  return best;
+function parseFirstNumber(str){
+  // soporta 447,22 / 447.22 / 1.234,56
+  const m = str.match(/(\d{1,3}(?:\.\d{3})*(?:,\d{1,4})|\d{2,5}(?:\.\d{1,4})?)/);
+  if(!m) return null;
+  const n = Number(m[1].replace(/\./g, "").replace(",", "."));
+  return Number.isFinite(n) ? n : null;
 }
 
 export default async function handler(req, res){
@@ -52,24 +26,29 @@ export default async function handler(req, res){
     if(!r.ok) return res.status(502).json({ ok:false, error:"Source fetch failed" });
 
     const html = await r.text();
-    const rate = extractMonitorRate(html);
+    const lower = html.toLowerCase();
+
+    // Intento: buscar número cerca de "euro"
+    const idx = lower.indexOf("euro");
+    const slice = idx >= 0 ? html.slice(Math.max(0, idx - 1200), idx + 2500) : html;
+
+    const rate = parseFirstNumber(slice) ?? parseFirstNumber(html);
 
     if(!rate) return res.status(500).json({ ok:false, error:"Rate not found" });
 
-    // ✅ Validación anti-locura
+    // ✅ Anti-locura: no guardes números fuera del rango
     if(!(rate >= MIN_RATE && rate <= MAX_RATE)){
       return res.status(200).json({
         ok: false,
-        error: "Rate out of range (not saved)",
+        error: "Rate out of range (NOT saved)",
         rate,
-        min: MIN_RATE,
-        max: MAX_RATE
+        expected: `${MIN_RATE}-${MAX_RATE}`,
+        source: SOURCE_URL
       });
     }
 
+    // guardar en Supabase
     const client = sb();
-
-    // guardar tasa buena
     const { error } = await client
       .from("settings")
       .upsert({
