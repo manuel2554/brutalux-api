@@ -1,4 +1,4 @@
-let RATE = { rate: 375.08, updatedAt: new Date().toISOString() };
+import { sb } from "./_supabase.js";
 
 const ALLOW_ORIGIN = "https://manuel2554.github.io";
 const ADMIN_TOKEN = process.env.RATE_ADMIN_TOKEN;
@@ -15,14 +15,27 @@ export default async function handler(req, res) {
   const ended = cors(req, res);
   if (ended) return;
 
+  const client = sb();
+
   if (req.method === "GET") {
-    return res.status(200).json(RATE);
+    const { data, error } = await client
+      .from("settings")
+      .select("value, updated_at")
+      .eq("key", "rate")
+      .single();
+
+    if (error) return res.status(500).json({ ok:false, error: error.message });
+
+    const rate = Number(data?.value?.rate);
+    return res.status(200).json({
+      rate: Number.isFinite(rate) ? rate : null,
+      updatedAt: data?.updated_at
+    });
   }
 
   if (req.method === "POST") {
     const auth = req.headers.authorization || "";
     const token = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-
     if (!ADMIN_TOKEN || token !== ADMIN_TOKEN) {
       return res.status(401).json({ ok: false, error: "Unauthorized" });
     }
@@ -39,8 +52,17 @@ export default async function handler(req, res) {
       return res.status(400).json({ ok: false, error: "Invalid rate" });
     }
 
-    RATE = { rate: r, updatedAt: new Date().toISOString() };
-    return res.status(200).json({ ok: true, ...RATE });
+    const { error } = await client
+      .from("settings")
+      .upsert({
+        key: "rate",
+        value: { rate: r },
+        updated_at: new Date().toISOString()
+      });
+
+    if (error) return res.status(500).json({ ok:false, error: error.message });
+
+    return res.status(200).json({ ok:true, rate: r });
   }
 
   return res.status(405).json({ ok: false, error: "Method not allowed" });
