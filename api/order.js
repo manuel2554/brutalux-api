@@ -5,93 +5,75 @@ const ALLOW_ORIGIN = "https://manuel2554.github.io";
 function cors(req, res) {
   res.setHeader("Access-Control-Allow-Origin", ALLOW_ORIGIN);
   res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
   if (req.method === "OPTIONS") return res.status(204).end();
   return false;
 }
 
-function money(n){
-  const x = Number(n);
-  return Number.isFinite(x) ? x.toFixed(2) : "0.00";
+function makeCode(){
+  return "BLX-" + Math.random().toString(36).slice(2, 7).toUpperCase();
 }
 
-async function sendTelegram(text){
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  if(!token || !chatId) return;
-
-  const url = `https://api.telegram.org/bot${token}/sendMessage`;
-  await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type":"application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text,
-      disable_web_page_preview: true
-    })
-  });
-}
-
-export default async function handler(req, res) {
+export default async function handler(req, res){
   const ended = cors(req, res);
   if (ended) return;
 
-  if (req.method !== "POST") {
-    return res.status(405).json({ ok:false, error:"Method not allowed" });
-  }
-
-  let body;
-  try {
-    body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
-  } catch {
-    return res.status(400).json({ ok:false, error:"Invalid JSON" });
-  }
-
-  const items = Array.isArray(body?.items) ? body.items : [];
-  if (!items.length) return res.status(400).json({ ok:false, error:"Empty order" });
-
-  const order = {
-    customer: body?.customer || {},
-    items,
-    totals: body?.totals || {},
-    meta: body?.meta || {}
-  };
-
   const client = sb();
-  const { data, error } = await client
-    .from("orders")
-    .insert([order])
-    .select("id, created_at")
-    .single();
 
-  if (error) return res.status(500).json({ ok:false, error: error.message });
+  // POST: crear pedido
+  if(req.method === "POST"){
+    let body;
+    try{
+      body = typeof req.body === "string" ? JSON.parse(req.body) : req.body;
+    }catch{
+      return res.status(400).json({ ok:false, error:"Invalid JSON" });
+    }
 
-  // Telegram message
-  const c = order.customer || {};
-  const t = order.totals || {};
-  const lines = items.map(it => `• ${it.qty} x ${it.name} (${it.id})`).join("\n");
+    const items = Array.isArray(body?.items) ? body.items : [];
+    if(!items.length) return res.status(400).json({ ok:false, error:"Empty order" });
 
-  const msg =
-`🧾 Pedido nuevo BRUTALUX
-ID: ${data.id}
-Fecha: ${data.created_at}
+    // code único (reintento simple)
+    let code = makeCode();
+    for(let i=0;i<5;i++){
+      const { data } = await client.from("orders").select("code").eq("code", code).maybeSingle();
+      if(!data) break;
+      code = makeCode();
+    }
 
-Cliente: ${c.name || "—"}
-Vehículo: ${c.car || "—"}
-Ciudad: ${c.city || "—"}
-Nota: ${c.note || "—"}
+    const order = {
+      code,
+      customer: body?.customer || {},
+      items,
+      totals: body?.totals || {},
+      meta: body?.meta || {}
+    };
 
-Items:
-${lines}
+    const { data, error } = await client
+      .from("orders")
+      .insert([order])
+      .select("code, created_at")
+      .single();
 
-Subtotal EUR: €${money(t.subEur)}
-Tasa Bs/EUR: ${t.rate ?? "—"}
-Ref Bs: Bs ${t.subBs ?? "—"}
+    if(error) return res.status(500).json({ ok:false, error: error.message });
 
-Link: ${order.meta?.page || "—"}
-`;
+    return res.status(200).json({ ok:true, code: data.code, createdAt: data.created_at });
+  }
 
-  try{ await sendTelegram(msg); }catch(e){}
+  // GET: traer pedido por code
+  if(req.method === "GET"){
+    const code = String(req.query?.code || "").trim();
+    if(!code) return res.status(400).json({ ok:false, error:"Missing code" });
 
-  return res.status(200).json({ ok:true, id: data.id });
+    const { data, error } = await client
+      .from("orders")
+      .select("code, created_at, customer, items, totals, meta")
+      .eq("code", code)
+      .single();
+
+    if(error) return res.status(404).json({ ok:false, error:"Order not found" });
+
+    return res.status(200).json({ ok:true, order: data });
+  }
+
+  return res.status(405).json({ ok:false, error:"Method not allowed" });
 }
