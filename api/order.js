@@ -146,7 +146,7 @@ export default async function handler(req, res){
 
     const { data, error } = await client
       .from("orders")
-      .select("code, created_at, customer, items, totals, meta")
+      .select("code, created_at, status, status_updated_at, customer, items, totals, meta")
       .eq("code", code)
       .single();
 
